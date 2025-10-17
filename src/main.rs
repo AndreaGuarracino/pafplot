@@ -309,11 +309,23 @@ impl PafFile {
             }
         }
     }
-    fn for_each_match_in_file<F>(self: &PafFile, mut func: F)
+    fn for_each_match_in_file<F>(
+        self: &PafFile,
+        strand_filter: &[char],
+        mut func: F,
+    ) -> (usize, usize)
     where
         F: FnMut(char, usize, bool, usize, usize),
     {
+        let mut total = 0;
+        let mut kept = 0;
         for_each_line_in_file(&self.filename, |line: &str| {
+            total += 1;
+            let strand = if paf_query_is_rev(line) { '-' } else { '+' };
+            if !strand_filter.contains(&strand) {
+                return;
+            }
+            kept += 1;
             /*
             let (x, y) = self.global_start(line);
             println!(
@@ -329,6 +341,7 @@ impl PafFile {
             self.for_each_match(line, &mut func);
             //println!();
         });
+        (kept, total)
     }
     fn get_axes(self: &PafFile, major_axis: usize) -> (usize, usize) {
         //let max_length = cmp::max(self.query_length, self.target_length) as f64;
@@ -523,9 +536,36 @@ fn main() {
                 .long("bedpe")
                 .help("BEDPE file(s) for marking 2D ranges as semi-transparent overlays"),
         )
+        .arg(
+            Arg::with_name("show-strand")
+                .takes_value(true)
+                .long("show-strand")
+                .help("Comma-separated strand(s) to display: +, -, or both (default: +,-)"),
+        )
         .get_matches();
 
     let filename = matches.value_of("INPUT").unwrap();
+
+    // Parse strand filter
+    let strand_filter: Vec<char> = matches
+        .value_of("show-strand")
+        .unwrap_or("+,-")
+        .split(',')
+        .filter_map(|s| match s.trim() {
+            "+" => Some('+'),
+            "-" => Some('-'),
+            _ => None,
+        })
+        .collect();
+
+    // Report strand filter configuration
+    let strand_display = strand_filter
+        .iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    eprintln!("[pafplot] Showing strands: {}", strand_display);
+
     let paf = PafFile::new(filename);
 
     let major_axis = matches
@@ -757,7 +797,13 @@ fn main() {
             }
         }
     };
-    paf.for_each_match_in_file(draw_match);
+    let (kept, total) = paf.for_each_match_in_file(&strand_filter, draw_match);
+    eprintln!(
+        "[pafplot] Alignments: {} kept, {} filtered ({:.1}% kept)",
+        kept,
+        total - kept,
+        (kept as f64 / total as f64) * 100.0
+    );
 
     // Generate PNG (default output)
     let png_filename = if output_filename.ends_with(".png") {
@@ -794,19 +840,31 @@ fn main() {
             ranges: (target_range, query_range),
             bed_regions: &bed_regions,
             bedpe_regions: &bedpe_regions,
+            strand_filter: &strand_filter,
         });
     }
 }
 
-fn collect_alignment_data(paf: &PafFile) -> (String, String, String) {
+fn collect_alignment_data(
+    paf: &PafFile,
+    strand_filter: &[char],
+) -> (String, String, String, usize, usize) {
     let mut alignments = Vec::new();
     let mut detailed_alignments = Vec::new();
     let mut summary_grid = std::collections::HashMap::new();
     let grid_size = 1000; // Grid resolution for summary view
+    let mut total = 0;
+    let mut kept = 0;
 
     // Collect both simple alignments and detailed CIGAR data
     for_each_line_in_file(&paf.filename, |line| {
+        total += 1;
         let query_rev = paf_query_is_rev(line);
+        let strand = if query_rev { '-' } else { '+' };
+        if !strand_filter.contains(&strand) {
+            return;
+        }
+        kept += 1;
         let (x, y) = paf.global_start(line, query_rev);
 
         // Store the full alignment for line drawing
@@ -873,7 +931,7 @@ fn collect_alignment_data(paf: &PafFile) -> (String, String, String) {
     let summary_json = format!("[{}]", summary_data.join(","));
     let detailed_json = format!("[{}]", detailed_alignments.join(","));
 
-    (alignments_json, summary_json, detailed_json)
+    (alignments_json, summary_json, detailed_json, kept, total)
 }
 
 struct HtmlViewerConfig<'a> {
@@ -885,11 +943,20 @@ struct HtmlViewerConfig<'a> {
     ranges: ((usize, usize), (usize, usize)),
     bed_regions: &'a [BedRegion],
     bedpe_regions: &'a [BedpeRegion],
+    strand_filter: &'a [char],
 }
 
 fn generate_html_viewer(config: HtmlViewerConfig) {
     // Collect alignment data for canvas rendering
-    let (alignments_json, summary_json, detailed_json) = collect_alignment_data(config.paf);
+    let (alignments_json, summary_json, detailed_json, kept, total) =
+        collect_alignment_data(config.paf, config.strand_filter);
+
+    eprintln!(
+        "[pafplot] HTML viewer: {} alignments kept, {} filtered ({:.1}% kept)",
+        kept,
+        total - kept,
+        (kept as f64 / total as f64) * 100.0
+    );
 
     // Generate sequence metadata as JSON
     let mut targets_json = String::from("[");
