@@ -312,6 +312,7 @@ impl PafFile {
     fn for_each_match_in_file<F>(
         self: &PafFile,
         strand_filter: &[char],
+        min_length: usize,
         mut func: F,
     ) -> (usize, usize)
     where
@@ -324,6 +325,13 @@ impl PafFile {
             let strand = if paf_query_is_rev(line) { '-' } else { '+' };
             if !strand_filter.contains(&strand) {
                 return;
+            }
+            if min_length > 0 {
+                let query_len = paf_query_end(line) - paf_query_begin(line);
+                let target_len = paf_target_end(line) - paf_target_begin(line);
+                if query_len.max(target_len) < min_length {
+                    return;
+                }
             }
             kept += 1;
             /*
@@ -542,6 +550,13 @@ fn main() {
                 .long("show-strand")
                 .help("Comma-separated strand(s) to display: +, -, or both (default: +,-)"),
         )
+        .arg(
+            Arg::with_name("min-length")
+                .takes_value(true)
+                .short("l")
+                .long("min-length")
+                .help("Minimum alignment length to display (query or target, whichever is larger) [default: 0]"),
+        )
         .get_matches();
 
     let filename = matches.value_of("INPUT").unwrap();
@@ -558,13 +573,23 @@ fn main() {
         })
         .collect();
 
-    // Report strand filter configuration
+    // Parse minimum length filter
+    let min_length = matches
+        .value_of("min-length")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .unwrap_or(0);
+
+    // Report filter configuration
     let strand_display = strand_filter
         .iter()
         .map(|c| c.to_string())
         .collect::<Vec<_>>()
         .join(",");
     eprintln!("[pafplot] Showing strands: {}", strand_display);
+    if min_length > 0 {
+        eprintln!("[pafplot] Minimum alignment length: {}", min_length);
+    }
 
     let paf = PafFile::new(filename);
 
@@ -797,7 +822,7 @@ fn main() {
             }
         }
     };
-    let (kept, total) = paf.for_each_match_in_file(&strand_filter, draw_match);
+    let (kept, total) = paf.for_each_match_in_file(&strand_filter, min_length, draw_match);
     eprintln!(
         "[pafplot] Alignments: {} kept, {} filtered ({:.1}% kept)",
         kept,
@@ -841,6 +866,7 @@ fn main() {
             bed_regions: &bed_regions,
             bedpe_regions: &bedpe_regions,
             strand_filter: &strand_filter,
+            min_length,
         });
     }
 }
@@ -848,6 +874,7 @@ fn main() {
 fn collect_alignment_data(
     paf: &PafFile,
     strand_filter: &[char],
+    min_length: usize,
 ) -> (String, String, String, usize, usize) {
     let mut alignments = Vec::new();
     let mut detailed_alignments = Vec::new();
@@ -864,12 +891,16 @@ fn collect_alignment_data(
         if !strand_filter.contains(&strand) {
             return;
         }
-        kept += 1;
-        let (x, y) = paf.global_start(line, query_rev);
 
         // Store the full alignment for line drawing
         let query_len = paf_query_end(line) - paf_query_begin(line);
         let target_len = paf_target_end(line) - paf_target_begin(line);
+
+        if min_length > 0 && query_len.max(target_len) < min_length {
+            return;
+        }
+        kept += 1;
+        let (x, y) = paf.global_start(line, query_rev);
 
         alignments.push(format!(
             r#"{{"x":{x},"y":{y},"queryLen":{query_len},"targetLen":{target_len},"rev":{query_rev}}}"#
@@ -944,12 +975,13 @@ struct HtmlViewerConfig<'a> {
     bed_regions: &'a [BedRegion],
     bedpe_regions: &'a [BedpeRegion],
     strand_filter: &'a [char],
+    min_length: usize,
 }
 
 fn generate_html_viewer(config: HtmlViewerConfig) {
     // Collect alignment data for canvas rendering
     let (alignments_json, summary_json, detailed_json, kept, total) =
-        collect_alignment_data(config.paf, config.strand_filter);
+        collect_alignment_data(config.paf, config.strand_filter, config.min_length);
 
     eprintln!(
         "[pafplot] HTML viewer: {} alignments kept, {} filtered ({:.1}% kept)",
