@@ -557,6 +557,13 @@ fn main() {
                 .long("min-length")
                 .help("Minimum alignment length to display (query or target, whichever is larger) [default: 0]"),
         )
+        .arg(
+            Arg::with_name("color-strands")
+                .takes_value(false)
+                .short("c")
+                .long("color-strands")
+                .help("Use different colors for forward (green) and reverse (red) strand alignments"),
+        )
         .get_matches();
 
     let filename = matches.value_of("INPUT").unwrap();
@@ -580,6 +587,9 @@ fn main() {
         .parse::<usize>()
         .unwrap_or(0);
 
+    // Parse color-strands flag
+    let color_strands = matches.is_present("color-strands");
+
     // Report filter configuration
     let strand_display = strand_filter
         .iter()
@@ -589,6 +599,9 @@ fn main() {
     eprintln!("[pafplot] Showing strands: {}", strand_display);
     if min_length > 0 {
         eprintln!("[pafplot] Minimum alignment length: {}", min_length);
+    }
+    if color_strands {
+        eprintln!("[pafplot] Coloring strands: forward=green, reverse=red");
     }
 
     let paf = PafFile::new(filename);
@@ -713,17 +726,59 @@ fn main() {
             *i = white;
         }
     }
-    let get_color = if dark {
-        |val: f64| RGB8 {
-            r: ((255.0 * val).round() as u8),
-            g: ((255.0 * val).round() as u8),
-            b: ((255.0 * val).round() as u8),
+    let get_color = if color_strands {
+        // Color by strand: forward=green, reverse=red
+        if dark {
+            |val: f64, is_reverse: bool| {
+                if is_reverse {
+                    // Red for reverse
+                    RGB8 {
+                        r: ((255.0 * val).round() as u8),
+                        g: 0,
+                        b: 0,
+                    }
+                } else {
+                    // Green for forward
+                    RGB8 {
+                        r: 0,
+                        g: ((255.0 * val).round() as u8),
+                        b: 0,
+                    }
+                }
+            }
+        } else {
+            |val: f64, is_reverse: bool| {
+                if is_reverse {
+                    // Red for reverse
+                    RGB8 {
+                        r: 255,
+                        g: ((255.0 * (1.0 - val)).round() as u8),
+                        b: ((255.0 * (1.0 - val)).round() as u8),
+                    }
+                } else {
+                    // Green for forward
+                    RGB8 {
+                        r: ((255.0 * (1.0 - val)).round() as u8),
+                        g: 255,
+                        b: ((255.0 * (1.0 - val)).round() as u8),
+                    }
+                }
+            }
         }
     } else {
-        |val: f64| RGB8 {
-            r: ((255.0 * (1.0 - val)).round() as u8),
-            g: ((255.0 * (1.0 - val)).round() as u8),
-            b: ((255.0 * (1.0 - val)).round() as u8),
+        // Grayscale
+        if dark {
+            |val: f64, _is_reverse: bool| RGB8 {
+                r: ((255.0 * val).round() as u8),
+                g: ((255.0 * val).round() as u8),
+                b: ((255.0 * val).round() as u8),
+            }
+        } else {
+            |val: f64, _is_reverse: bool| RGB8 {
+                r: ((255.0 * (1.0 - val)).round() as u8),
+                g: ((255.0 * (1.0 - val)).round() as u8),
+                b: ((255.0 * (1.0 - val)).round() as u8),
+            }
         }
     };
 
@@ -744,7 +799,7 @@ fn main() {
     for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
         if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
             let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-            pixels[i] = get_color(val * border_width);
+            pixels[i] = get_color(val * border_width, false);
         }
     }
     // Right border
@@ -753,7 +808,7 @@ fn main() {
     for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
         if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
             let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-            pixels[i] = get_color(val * border_width);
+            pixels[i] = get_color(val * border_width, false);
         }
     }
     // Bottom border
@@ -762,7 +817,7 @@ fn main() {
     for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
         if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
             let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-            pixels[i] = get_color(val * border_width);
+            pixels[i] = get_color(val * border_width, false);
         }
     }
     // Left border
@@ -771,7 +826,7 @@ fn main() {
     for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
         if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
             let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-            pixels[i] = get_color(val * border_width);
+            pixels[i] = get_color(val * border_width, false);
         }
     }
 
@@ -783,7 +838,7 @@ fn main() {
             for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
                 if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
                     let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-                    pixels[i] = get_color(val * 0.2);
+                    pixels[i] = get_color(val * 0.2, false);
                 }
             }
         }
@@ -795,7 +850,7 @@ fn main() {
             for ((i, j), val) in XiaolinWu::<f64, i64>::new(start, end) {
                 if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
                     let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-                    pixels[i] = get_color(val * 0.2);
+                    pixels[i] = get_color(val * 0.2, false);
                 }
             }
         }
@@ -818,7 +873,7 @@ fn main() {
             if i >= 0 && i < (axes.0 as i64) && j >= 0 && j < (axes.1 as i64) {
                 //println!("drawing pixel {} {} {}", i, j, val);
                 let i: usize = (i as usize) + (((axes.1 - 1) - j as usize) * axes.0);
-                pixels[i] = get_color(val);
+                pixels[i] = get_color(val, rev);
             }
         }
     };
@@ -867,6 +922,7 @@ fn main() {
             bedpe_regions: &bedpe_regions,
             strand_filter: &strand_filter,
             min_length,
+            color_strands,
         });
     }
 }
@@ -976,6 +1032,7 @@ struct HtmlViewerConfig<'a> {
     bedpe_regions: &'a [BedpeRegion],
     strand_filter: &'a [char],
     min_length: usize,
+    color_strands: bool,
 }
 
 fn generate_html_viewer(config: HtmlViewerConfig) {
@@ -1401,6 +1458,9 @@ fn generate_html_viewer(config: HtmlViewerConfig) {
         const backgroundColor = darkMode ? '#1a1a1a' : '#ffffff';
         const lineColor = darkMode ? '#ffffff' : '#000000';
         const borderColor = darkMode ? '#444444' : '#cccccc';
+        const colorStrands = {};
+        const forwardColor = darkMode ? '#00ff00' : '#00ff00';  // Green
+        const reverseColor = darkMode ? '#ff0000' : '#ff0000';  // Red
         
         // WebGL setup
         let shaderProgram;
@@ -1642,6 +1702,8 @@ fn generate_html_viewer(config: HtmlViewerConfig) {
             
             // Draw alignments - three rendering modes based on viewport size
             const matchColor = hexToRgb(lineColor);
+            const forwardMatchColor = hexToRgb(forwardColor);
+            const reverseMatchColor = hexToRgb(reverseColor);
             const mismatchColor = hexToRgb(darkMode ? '#ff4444' : '#cc0000');
             const indelColor = hexToRgb(darkMode ? '#4444ff' : '#0000cc');
             const summaryColor = hexToRgb(lineColor); // Use same color as standard matches
@@ -1687,14 +1749,15 @@ fn generate_html_viewer(config: HtmlViewerConfig) {
                     
                     // Add margin to prevent edge case culling issues
                     const margin = 100; // pixels
-                    if (maxX >= viewLeft - margin && minX <= viewRight + margin && 
+                    if (maxX >= viewLeft - margin && minX <= viewRight + margin &&
                         maxY >= viewTop - margin && minY <= viewBottom + margin) {{
                         // Use consistent high opacity for visibility at all zoom levels
                         const alpha = 0.9;
+                        const color = colorStrands ? (alignment.rev ? reverseMatchColor : forwardMatchColor) : summaryColor;
                         lineVertices.push(startCoords.x, startCoords.y);
                         lineVertices.push(endCoords.x, endCoords.y);
-                        lineColors.push(summaryColor.r, summaryColor.g, summaryColor.b, alpha);
-                        lineColors.push(summaryColor.r, summaryColor.g, summaryColor.b, alpha);
+                        lineColors.push(color.r, color.g, color.b, alpha);
+                        lineColors.push(color.r, color.g, color.b, alpha);
                     }}
                 }});
             }} else if (shouldShowDetails && detailedAlignments.length > 0) {{
@@ -1869,12 +1932,13 @@ fn generate_html_viewer(config: HtmlViewerConfig) {
                     const maxY = Math.max(startCoords.y, endCoords.y);
                     
                     const margin = 100; // pixels
-                    if (maxX >= viewLeft - margin && minX <= viewRight + margin && 
+                    if (maxX >= viewLeft - margin && minX <= viewRight + margin &&
                         maxY >= viewTop - margin && minY <= viewBottom + margin) {{
+                        const color = colorStrands ? (alignment.rev ? reverseMatchColor : forwardMatchColor) : matchColor;
                         lineVertices.push(startCoords.x, startCoords.y);
                         lineVertices.push(endCoords.x, endCoords.y);
-                        lineColors.push(matchColor.r, matchColor.g, matchColor.b, 0.9);
-                        lineColors.push(matchColor.r, matchColor.g, matchColor.b, 0.9);
+                        lineColors.push(color.r, color.g, color.b, 0.9);
+                        lineColors.push(color.r, color.g, color.b, 0.9);
                     }}
                 }});
             }}
@@ -2531,6 +2595,7 @@ fn generate_html_viewer(config: HtmlViewerConfig) {
         format!("[{}, {}]", config.ranges.0 .0, config.ranges.0 .1),
         format!("[{}, {}]", config.ranges.1 .0, config.ranges.1 .1),
         config.dark,
+        config.color_strands,
     );
 
     let html_filename = if config.output_filename.ends_with(".html") {
